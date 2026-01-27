@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Скрипт для сбора LLDP-топологии с Huawei через Nornir + Netmiko + D2
-Скрипт создает d2 файл который затем нужно открыть с помощью d2
+Скрипт создает d2 файл и генерирует картинку в png.
+D2 файл можно затем открыть с помощью d2 утилиты и смотреть в веб-браузере
 d2 --layout=elk -w huawei_lldp_topology.d2 out.svg
 Если d2 не установлен, то установить (Нужен предварительно уст. GO)
 go install oss.terrastruct.com/d2@latest
@@ -125,6 +126,9 @@ def collect_and_draw_topology(
     nr,
     output_file: str = "huawei_lldp_topology",      # без расширения
     open_image: bool = True,
+    save_outputs: bool = False,
+    use_saved: bool = False,
+    output_dir: str = "device_outputs",
 ) -> None:
     """
     Собирает топологию из LLDP и генерирует диаграмму в формате D2 → PNG/SVG
@@ -132,10 +136,42 @@ def collect_and_draw_topology(
     topology: Dict[str, List[Tuple[str, str, str]]] = {}
     seen_edges = set()
 
-    results = nr.run(
-        task=netmiko_send_command,
-        command_string="display lldp neighbor brief"
-    )
+    ##############################################################
+    ## Блок сохранения ###########################################
+    class FakeResult:
+        def __init__(self, failed: bool, result: str = None, exception: str = None):
+            self.failed = failed
+            self.result = result
+            self.exception = exception
+
+    if use_saved:
+        results = {}
+        os.makedirs(output_dir, exist_ok=True)  # Ensure dir exists, though not necessary for reading
+        for host in nr.inventory.hosts:
+            file_path = os.path.join(output_dir, f"{host}.txt")
+            if os.path.exists(file_path):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    raw = f.read()
+                results[host] = FakeResult(failed=False, result=raw)
+            else:
+                print(f"Файл для {host} не найден: {file_path}")
+                results[host] = FakeResult(failed=True, exception='Файл не найден')
+    else:
+        results = nr.run(
+            task=netmiko_send_command,
+            command_string="display lldp neighbor brief"
+        )
+
+    if save_outputs and not use_saved:
+        os.makedirs(output_dir, exist_ok=True)
+        for host, r in results.items():
+            if not r.failed:
+                file_path = os.path.join(output_dir, f"{host}.txt")
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(r.result)
+                print(f"Вывод для {host} сохранен в {file_path}")
+
+    ##################################################################################
 
     d2_lines = [
         "# LLDP Topology - Huawei devices",
@@ -187,8 +223,6 @@ def collect_and_draw_topology(
             "leaf": f"{icons_path}/switch2.svg",
         }
 
-        # ...
-
         role = "device"  # default
         icon = ICON_MAP.get("access", f"{icons_path}/switch.svg")
 
@@ -211,7 +245,6 @@ def collect_and_draw_topology(
         node_line += '\n}'
 
         d2_lines.append(node_line)
-        # d2_lines.append(f'{clean_host}: "{host}" {{ class: device }}')
 
         for n in neighbors:
             neigh_raw = n["neighbor_dev"]
@@ -224,13 +257,13 @@ def collect_and_draw_topology(
 
             topology[host].append((neigh, local_p, remote_p))
 
-            edge_key = tuple(sorted([host, neigh]) + [local_p, remote_p])
+            edge_key = tuple(sorted([host, neigh]) + sorted([local_p, remote_p]))
             if edge_key in seen_edges:
                 continue
             seen_edges.add(edge_key)
 
             label = f"{local_p} → {remote_p}"
-            # В D2 связь записывается просто: узел1 -> узел2: "метка"
+            # В D2 связь записывается как undirected
             d2_lines.append(f'{clean_host} -> {clean_neigh}: "{label}" {{ class: link }}')
 
 
@@ -299,7 +332,12 @@ def main():
     )
 
     print("=== Сбор LLDP-топологии с Huawei (Nornir + Netmiko + Pyvis) ===\n")
-    collect_and_draw_topology(nr)
+    collect_and_draw_topology(
+        nr,
+        save_outputs=True,  # Сохранить выводы в файлы
+        use_saved=True,    # Использовать сохраненные файлы (если True, не подключается к устройствам)
+        output_dir="device_outputs"
+    )
 
 
 if __name__ == "__main__":
