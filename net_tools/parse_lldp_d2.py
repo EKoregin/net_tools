@@ -8,6 +8,7 @@ d2 --layout=elk -w huawei_lldp_topology.d2 out.svg
 go install oss.terrastruct.com/d2@latest
 SVG icons
 https://d2lang.com/tour/icons/
+Note: Долго выполняется. Сильно грузит систему. Файл изображения получается большой
 """
 
 import os
@@ -72,7 +73,7 @@ def _looks_like_data_line(line: str) -> bool:
 
 def _parse_data_line(line: str) -> Optional[Dict[str, str]]:
     m = re.match(
-        r'^(\S+?)\s{2,}(.+?)\s{2,}(\S+?)\s{2,}(\d+)\s*$', line
+        r'^(\S+?)\s{2,}(.+?)\s{1,}(\S+?)\s{2,}(\d+)\s*$', line
     )
     if m:
         local, dev, neigh, exp = m.groups()
@@ -195,6 +196,7 @@ def collect_and_draw_topology(
         "",
     ]
 
+    #############################
     for host, r in results.items():
         if r.failed:
             print(f"[{host}] Ошибка: {r.exception or 'неизвестная'}")
@@ -211,9 +213,10 @@ def collect_and_draw_topology(
 
         topology[host] = []
 
-        # Добавляем узел устройства
-        clean_host = host.replace("-", "_").replace(".", "_")  # D2 не любит дефисы в ключах
+        # clean_host = host.replace("-", "_").replace(".", "_")
+        clean_host = host
 
+        # Определяем роль и иконку (без изменений)
         icons_path = "./icons"
         ICON_MAP = {
             "spine": f"{icons_path}/switch2.svg",
@@ -223,13 +226,13 @@ def collect_and_draw_topology(
             "leaf": f"{icons_path}/switch2.svg",
         }
 
-        role = "device"  # default
-        icon = ICON_MAP.get("access", f"{icons_path}/switch.svg")
+        role = "device"
+        icon = ""
 
         for keyword, assigned_role in [
-            ("spine", "spine"),
-            ("agg", "aggregation"),
-            ("access", "access"),
+            # ("spine", "spine"),
+            # ("agg", "aggregation"),
+            # ("access", "access"),
         ]:
             if keyword in host.lower():
                 role = assigned_role
@@ -248,23 +251,38 @@ def collect_and_draw_topology(
 
         for n in neighbors:
             neigh_raw = n["neighbor_dev"]
-            neigh = neigh_raw.split('.')[0].strip()
+            neigh = neigh_raw.strip()  # берём только имя хоста
             local_p = n["local_intf"]
             remote_p = n["neighbor_intf"]
 
             # clean_neigh = neigh.replace("-", "_").replace(".", "_")
-            clean_neigh = neigh
+            clean_neigh = neigh.rstrip('.')
 
             topology[host].append((neigh, local_p, remote_p))
 
-            edge_key = tuple(sorted([host, neigh]) + sorted([local_p, remote_p]))
+            # Ключ для уникальности: сортируем имена хостов + порты
+            a, b = sorted([host, neigh])
+            clean_a, clean_b = sorted([clean_host, clean_neigh], key=lambda x: x)
+
+            # Уникальный ключ связи (неориентированный)
+            edge_key = (a, b, local_p, remote_p) if a == host else (a, b, remote_p, local_p)
             if edge_key in seen_edges:
                 continue
             seen_edges.add(edge_key)
 
-            label = f"{local_p} → {remote_p}"
-            # В D2 связь записывается как undirected
-            d2_lines.append(f'{clean_host} -> {clean_neigh}: "{label}" {{ class: link }}')
+            # Рисуем связь ТОЛЬКО от меньшего имени к большему
+            if host < neigh:
+                src, dst = clean_host, clean_neigh
+                label_from = local_p
+                label_to = remote_p
+            else:
+                src, dst = clean_neigh, clean_host
+                label_from = remote_p
+                label_to = local_p
+
+            label = f"{label_from} → {label_to}"
+            d2_lines.append(f'{src} -> {dst}: "{label}" {{ class: link }}')
+    #############################
 
 
     if not seen_edges:
@@ -291,8 +309,9 @@ def collect_and_draw_topology(
 
     # Рендерим в PNG (требует установленного d2 в PATH)
     try:
+        print("Создаю png изображение диаграммы сети")
         subprocess.run(
-            ["d2", "--layout=elk", d2_path, png_path],
+            ["d2", "--layout=elk", "--elk-nodeNodeBetweenLayers=100", "--elk-padding=\"[top=40,left=40,bottom=40,right=40]\"", d2_path, png_path],
             check=True,
             capture_output=True,
             text=True
@@ -335,7 +354,7 @@ def main():
     collect_and_draw_topology(
         nr,
         save_outputs=True,  # Сохранить выводы в файлы
-        use_saved=True,    # Использовать сохраненные файлы (если True, не подключается к устройствам)
+        use_saved=False,    # Использовать сохраненные файлы (если True, не подключается к устройствам)
         output_dir="device_outputs"
     )
 

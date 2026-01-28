@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 Скрипт для сбора LLDP-топологии с Huawei через Nornir + Netmiko + Graphviz
-Исправлено под Nornir 3.x: правильная передача инвентаря без файлов
-"""
+Сохраняет созданную диаграмму сети в .dot формат
 
+Для конвертации из dot в drawio открыть WSL с установленным graphviz2drawio
+и запустить
+python3 -m graphviz2drawio huawei_lldp_topology.dot -o huawei_lldp_topology.drawio
+"""
+import os
 import re
 from typing import List, Dict, Tuple, Optional
 
@@ -95,7 +99,7 @@ def _parse_data_line(line: str) -> Optional[Dict[str, str]]:
     # Способ 2: local exptime neigh dev
     m = re.match(
         r'^(\S+?)\s{2,}'  # local
-        r'(\d+)\s{2,}'  # exptime
+        r'(\d+)\s{1,}'  # exptime
         r'(\S+?)\s{2,}'  # neigh intf
         r'(.+?)\s*$',  # dev (всё остальное)
         line
@@ -154,21 +158,30 @@ def _make_entry(
 # ─── Сбор и отрисовка топологии (без изменений) ─────────────────────────────────
 DEFAULT_STYLE = {
     "graph": {
-        "fontname": "Helvetica,Arial,sans-serif",
-        "fontsize": "14",
-        "rankdir": "LR",
-        "splines": "true",
-        "bgcolor": "transparent",
-        "center": "1",
-        "pad": "0.5",
+        "splines": "ortho",  # true / polyline / curved / ortho
+        "overlap": "false",
+        "nodesep": "0.6",
+        "ranksep": "0.9",
+        "rankdir": "LR",  #TB - top / LR слева- направо
+        "fontname": "Arial",
+        "fontsize": "12",
+        "dpi": "96",
+        # "edge": {"dir": "none"},
+        # "fontname": "Helvetica,Arial,sans-serif",
+        # "fontsize": "14",
+        # "rankdir": "LR",
+        # "splines": "true",
+        # "bgcolor": "transparent",
+        # "center": "1",
+        # "pad": "0.5",
         # "edge": {"dir": "none"},  # без стрелок
     },
     "node_default": {
         "shape": "box",
-        "style": "filled",
-        "fillcolor": "lightblue2",
+        "style": "rounded,filled",
+        "fillcolor": "aliceblue",
         "fontname": "Helvetica,Arial,sans-serif",
-        "fontsize": "12",
+        "fontsize": "11",
         "penwidth": "1.2",
     },
     "edge_default": {
@@ -177,17 +190,20 @@ DEFAULT_STYLE = {
         "arrowsize": "0.9",
         "color": "darkblue",
         "fontcolor": "darkblue",
-        "penwidth": "1.1",
+        "penwidth": "1.2",
     },
     "edge_label_prefix": "",  # можно поставить "via " или ""
-    "device_name_transform": lambda x: x.split('.')[0].strip(),  # как обрабатывать имя соседа
+    "device_name_transform": lambda x: x.strip(),  # как обрабатывать имя соседа
 }
+
 
 def collect_and_draw_topology(
         nr,
         output_file: str = "huawei_lldp_topology",
         style_config: Optional[Dict] = None,
-        open_image: bool = True,
+        save_outputs: bool = False,
+        use_saved: bool = False,
+        output_dir: str = "device_outputs",
 ) -> None:
     """
     Собирает топологию из LLDP и рисует в Graphviz с настраиваемым стилем.
@@ -218,10 +234,41 @@ def collect_and_draw_topology(
     topology: Dict[str, List[Tuple[str, str, str]]] = {}
     seen_edges = set()
 
-    results = nr.run(
-        task=netmiko_send_command,
-        command_string="display lldp neighbor brief"
-    )
+    ## Блок сохранения вывода###########################################
+    class FakeResult:
+        def __init__(self, failed: bool, result: str = None, exception: str = None):
+            self.failed = failed
+            self.result = result
+            self.exception = exception
+
+    if use_saved:
+        results = {}
+        os.makedirs(output_dir, exist_ok=True)  # Ensure dir exists, though not necessary for reading
+        for host in nr.inventory.hosts:
+            file_path = os.path.join(output_dir, f"{host}.txt")
+            if os.path.exists(file_path):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    raw = f.read()
+                results[host] = FakeResult(failed=False, result=raw)
+            else:
+                print(f"Файл для {host} не найден: {file_path}")
+                results[host] = FakeResult(failed=True, exception='Файл не найден')
+    else:
+        results = nr.run(
+            task=netmiko_send_command,
+            command_string="display lldp neighbor brief"
+        )
+
+    if save_outputs and not use_saved:
+        os.makedirs(output_dir, exist_ok=True)
+        for host, r in results.items():
+            if not r.failed:
+                file_path = os.path.join(output_dir, f"{host}.txt")
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(r.result)
+                print(f"Вывод для {host} сохранен в {file_path}")
+
+    ##################################################################################
 
     for host, r in results.items():
         if r.failed:
@@ -260,8 +307,12 @@ def collect_and_draw_topology(
         print("Связей не найдено")
         return
 
-    dot.render(output_file, view=open_image, cleanup=True)
-    print(f"\nСхема сохранена: {output_file}.png")
+    # 1. Явно сохраняем .dot-файл
+    dot.save(filename=f"{output_file}.dot")
+
+    # 2. Рендерим в PNG
+    # dot.render(output_file, view=True, cleanup=True)
+    # print(f"\nСхема сохранена: {output_file}.png")
 
     # вывод текстового списка связей (опционально можно вынести или отключить)
     print("\nСвязи:")
@@ -271,24 +322,27 @@ def collect_and_draw_topology(
             for neigh, lp, rp in sorted(topology[dev]):
                 print(f"    • {lp:20} → {neigh} ({rp})")
 
+
 def main():
-    # Обязательная регистрация плагина в Nornir 3.x+
     InventoryPluginRegister.register("SimpleInventory", SimpleInventory)
 
     nr = InitNornir(
         inventory={
             "plugin": "SimpleInventory",
             "options": {
-                "host_file": "hosts.yaml",  # или "./inventory/hosts.yaml"
-                # "group_file": "groups.yaml",      # если нужны группы — создайте файл
-                # "defaults_file": "defaults.yaml", # если нужны дефолты
+                "host_file": "hosts.yaml",
             }
         },
         logging={"enabled": False}  # или True для отладки
     )
 
     print("=== Сбор LLDP-топологии с Huawei (Nornir + Netmiko) ===\n")
-    collect_and_draw_topology(nr)
+    collect_and_draw_topology(
+        nr,
+        save_outputs=True,  # Сохранить выводы в файлы
+        use_saved=True,  # Использовать сохраненные файлы (если True, не подключается к устройствам)
+        output_dir="device_outputs"
+    )
 
 
 if __name__ == "__main__":
