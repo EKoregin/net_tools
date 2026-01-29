@@ -87,7 +87,7 @@ def _parse_data_line(line: str) -> Optional[Dict[str, str]]:
     # Способ 1: четыре столбца (самый частый) — local dev neigh exptime
     m = re.match(
         r'^(\S+?)\s{2,}'  # local_intf
-        r'(.+?)\s{2,}'  # neighbor_dev (жадно до следующего большого пробела)
+        r'(.+?)\s{1,}'  # neighbor_dev (жадно до следующего большого пробела)
         r'(\S+?)\s{2,}'  # neighbor_intf
         r'(\d+)\s*$',  # exptime
         line
@@ -99,7 +99,7 @@ def _parse_data_line(line: str) -> Optional[Dict[str, str]]:
     # Способ 2: local exptime neigh dev
     m = re.match(
         r'^(\S+?)\s{2,}'  # local
-        r'(\d+)\s{1,}'  # exptime
+        r'(\d+)\s{2,}'  # exptime
         r'(\S+?)\s{2,}'  # neigh intf
         r'(.+?)\s*$',  # dev (всё остальное)
         line
@@ -289,9 +289,11 @@ def collect_and_draw_topology(
         name_transform = style["device_name_transform"]
 
         for n in neighbors:
-            neigh = name_transform(n["neighbor_dev"])
+            neigh_raw = name_transform(n["neighbor_dev"])
             local_p = n["local_intf"]
             remote_p = n["neighbor_intf"]
+
+            neigh = neigh_raw.rstrip('.')
 
             topology[host].append((neigh, local_p, remote_p))
 
