@@ -108,7 +108,7 @@ def load_devices_from_file(file_path):
 def load_devices_from_netbox():
     nb = pynetbox.api(NETBOX_URL, TOKEN)
     devices = nb.dcim.devices.filter(
-        role=['aggregation'],
+        role=['aggregation','access'],
         tenant=TENANT,
         manufacturer="huawei"
     )

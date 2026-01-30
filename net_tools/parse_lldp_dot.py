@@ -3,6 +3,8 @@
 Скрипт для сбора LLDP-топологии с Huawei через Nornir + Netmiko + Graphviz
 Сохраняет созданную диаграмму сети в .dot формат
 
+Читает файл hosts.yaml
+
 Для конвертации из dot в drawio открыть WSL с установленным graphviz2drawio
 и запустить
 python3 -m graphviz2drawio huawei_lldp_topology.dot -o huawei_lldp_topology.drawio
@@ -342,7 +344,7 @@ def main():
     collect_and_draw_topology(
         nr,
         save_outputs=True,  # Сохранить выводы в файлы
-        use_saved=True,  # Использовать сохраненные файлы (если True, не подключается к устройствам)
+        use_saved=False,  # Использовать сохраненные файлы (если True, не подключается к устройствам)
         output_dir="device_outputs"
     )
 
