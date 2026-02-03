@@ -1,0 +1,9 @@
+pynetbox~=7.6.1
+nornir~=3.5.0
+PyYAML~=6.0.3
+graphviz~=0.21
+dotenv~=0.9.9
+python-dotenv~=1.2.1
+pyvis~=0.3.2
+pandas~=3.0.0
+netmiko~=4.6.0

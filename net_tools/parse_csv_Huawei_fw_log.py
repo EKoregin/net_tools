@@ -11,6 +11,20 @@ TOKEN = "e998dklsdf987fsljdsf99798lsdf979j"
 TENANT = "wh-berlin"
 
 Результат выводится в консоль и в .csv файл
+
+Запуск
+Если запускаете из консоли, то предварительно установите зависимости
+Создайте файл requirements.txt с содержимым:
+pynetbox~=7.6.1
+pandas~=3.0.0
+dotenv~=0.9.9
+
+и запустите
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+
+Затем сам скрипт
+python parse_csv_Huawei_fw_log.py
 """
 import ipaddress
 import os
