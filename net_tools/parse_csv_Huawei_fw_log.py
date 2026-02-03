@@ -5,7 +5,6 @@
 Из CSV-файла берет поля:
 SrcAddr, DstAddr, Port, Protocol
 Если поиск в Netbox находит несколько сетей, то выбирается самый длинный префикс.
-
 Формат файла .env
 NETBOX_URL = "https://netbox.domain.com"
 TOKEN = "e998dklsdf987fsljdsf99798lsdf979j"
