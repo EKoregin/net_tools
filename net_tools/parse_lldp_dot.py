@@ -9,8 +9,10 @@
 и запустить
 python3 -m graphviz2drawio huawei_lldp_topology.dot -o huawei_lldp_topology.drawio
 """
+import yaml
 import os
 import re
+from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
 from graphviz import Digraph
@@ -18,7 +20,129 @@ from nornir import InitNornir
 from nornir.core.plugins.inventory import InventoryPluginRegister
 from nornir.plugins.inventory.simple import SimpleInventory
 from nornir_netmiko.tasks import netmiko_send_command
+import pynetbox
+from dotenv import load_dotenv
 
+"""
+Формат файла .env
+NETBOX_URL = "https://netbox.domain.com"
+TOKEN = "e998dklsdf987fsljdsf99798lsdf979j"
+COMMAND = 'display ip routing-table protocol direct'
+USER = "admin"
+PASSWORD = "password"
+RESULT_CSV = "routing_table_summary.csv"
+RAW_OUTPUT_DIR = "direct_routes_raw_outputs"
+TENANT = "berlin"
+"""
+# ------------------------------------------------------------------------------
+# Настройки
+# ------------------------------------------------------------------------------
+load_dotenv()
+NETBOX_URL = os.getenv("NETBOX_URL")
+TOKEN      = os.getenv("TOKEN")
+# COMMAND    = os.getenv("COMMAND")
+COMMAND = "display lldp neighbor brief"
+USERNAME   = os.getenv("USER")
+PASSWORD   = os.getenv("PASSWORD")
+RESULT_CSV = os.getenv("RESULT_CSV")
+RAW_OUTPUT_DIR = os.getenv("RAW_OUTPUT_DIR")
+# Название арендатора, если хосты берутся из Netbox
+TENANT = os.getenv("TENANT")
+
+if not all([NETBOX_URL, TOKEN, COMMAND, USERNAME, PASSWORD, RESULT_CSV, RAW_OUTPUT_DIR]):
+    raise ValueError("Не заданы обязательные переменные")
+
+InventoryPluginRegister.register("SimpleInventory", SimpleInventory)
+
+# Получение хостов из API netbox
+def load_devices_from_netbox():
+    nb = pynetbox.api(NETBOX_URL, TOKEN)
+    devices = nb.dcim.devices.filter(
+        role=['aggregation'],
+        tenant=TENANT,
+        manufacturer="huawei"
+    )
+    if not devices:
+        print("Устройства не найдены по заданным критериям")
+        exit()
+
+    data = []
+    for dev in devices:
+
+        ip_addr = dev.primary_ip.address
+        print(dev.name, ip_addr)
+        dev_data = {
+            'name': dev.name,
+            'host': ip_addr.replace("/32", ""),
+            'username': USERNAME,
+            'password': PASSWORD
+        }
+        data.append(dev_data)
+
+    return data
+
+def create_temp_hosts_yaml(devices: list[dict], temp_file: str = "hosts_temp.yaml") -> Path:
+    """
+    Создаёт временный файл hosts_temp.yaml в формате, понятном SimpleInventory
+    """
+    data = {}
+
+    for dev in devices:
+        name = dev["name"]
+        data[name] = {
+            "hostname": dev["host"],           # ← IP или FQDN
+            "platform": "huawei",
+            "username": dev.get("username", "admin"),
+            "password": dev.get("password", ""),
+            "connection_options": {
+                "netmiko": {
+                    "extras": {
+                        "device_type": "huawei",
+                        "conn_timeout": 20,
+                        "global_delay_factor": 0.5,
+                        "fast_cli": False,
+                    }
+                }
+            }
+        }
+
+    path = Path(temp_file)
+    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+    return path
+
+def load_nornir_with_temp_file(devices: list[dict]) -> InitNornir:
+    """
+    Основная функция:
+      1. Создаёт временный yaml
+      2. Проверяет его существование и размер
+      3. Инициализирует Nornir
+    """
+    temp_path = create_temp_hosts_yaml(devices)
+
+    # Проверка файла
+    if not temp_path.is_file():
+        raise FileNotFoundError(f"Не удалось создать файл: {temp_path}")
+
+    if temp_path.stat().st_size == 0:
+        raise ValueError(f"Созданный файл пустой: {temp_path}")
+
+    print(f"Временный инвентарь создан: {temp_path} ({temp_path.stat().st_size} байт)")
+
+    nr = InitNornir(
+        inventory={
+            "plugin": "SimpleInventory",
+            "options": {
+                "host_file": str(temp_path),
+                # "group_file": "groups.yaml",      # если понадобится позже
+                # "defaults_file": "defaults.yaml",
+            }
+        },
+        logging={"enabled": False},
+    )
+
+    print(f"Загружено хостов: {len(nr.inventory.hosts)}")
+    return nr
 
 def parse_huawei_lldp_brief(output: str) -> List[Dict[str, str]]:
     """
@@ -168,15 +292,6 @@ DEFAULT_STYLE = {
         "fontname": "Arial",
         "fontsize": "12",
         "dpi": "96",
-        # "edge": {"dir": "none"},
-        # "fontname": "Helvetica,Arial,sans-serif",
-        # "fontsize": "14",
-        # "rankdir": "LR",
-        # "splines": "true",
-        # "bgcolor": "transparent",
-        # "center": "1",
-        # "pad": "0.5",
-        # "edge": {"dir": "none"},  # без стрелок
     },
     "node_default": {
         "shape": "box",
@@ -258,7 +373,7 @@ def collect_and_draw_topology(
     else:
         results = nr.run(
             task=netmiko_send_command,
-            command_string="display lldp neighbor brief"
+            command_string=COMMAND
         )
 
     if save_outputs and not use_saved:
@@ -330,15 +445,27 @@ def collect_and_draw_topology(
 def main():
     InventoryPluginRegister.register("SimpleInventory", SimpleInventory)
 
-    nr = InitNornir(
-        inventory={
-            "plugin": "SimpleInventory",
-            "options": {
-                "host_file": "hosts.yaml",
-            }
-        },
-        logging={"enabled": False}  # или True для отладки
-    )
+    devices = load_devices_from_netbox()
+    if not devices:
+        print("Нет устройств из NetBox → выход")
+        return
+
+    try:
+        nr = load_nornir_with_temp_file(devices)
+        print("Доступные хосты:", list(nr.inventory.hosts.keys()))
+    except Exception as e:
+        print(f"Ошибка при инициализации Nornir:\n{e}")
+
+    # Конфиг брать из hosts.yaml
+    # nr = InitNornir(
+    #     inventory={
+    #         "plugin": "SimpleInventory",
+    #         "options": {
+    #             "host_file": "hosts.yaml",
+    #         }
+    #     },
+    #     logging={"enabled": False}  # или True для отладки
+    # )
 
     print("=== Сбор LLDP-топологии с Huawei (Nornir + Netmiko) ===\n")
     collect_and_draw_topology(
