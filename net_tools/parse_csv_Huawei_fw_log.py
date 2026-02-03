@@ -18,6 +18,7 @@ TENANT = "wh-berlin"
 pynetbox~=7.6.1
 pandas~=3.0.0
 dotenv~=0.9.9
+openpyxl~=3.1.5
 
 и запустите
 python -m pip install --upgrade pip
@@ -33,6 +34,7 @@ from typing import Dict, Optional
 import pandas as pd
 import pynetbox
 from dotenv import load_dotenv
+from datetime import datetime
 
 # ────────────────────────────────────────────────
 # НАСТРОЙКИ
@@ -42,7 +44,7 @@ TOKEN       = os.getenv("TOKEN")
 TENANT      = os.getenv("TENANT")
 CSV_DIR     = "csv"
 INPUT_FILE  = CSV_DIR + "/policy_org.csv"
-OUTPUT_FILE = CSV_DIR + "/unique_with_counts.csv"
+# OUTPUT_FILE = CSV_DIR + "/unique_with_counts.csv"
 
 # Список полей, которые нужно оставить
 # Порядок в списке определяет порядок колонок в выводе
@@ -140,13 +142,44 @@ def get_longest_prefix(ip_str: str, nb) -> tuple[Optional[str], Optional[str]]:
 
 # ────────────────────────────────────────────────
 
+def save_results(df: pd.DataFrame, base_name: str = "traffic_analysis"):
+    """Сохраняет DataFrame в CSV и Excel"""
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    csv_path = os.path.join(CSV_DIR, f"{base_name}_{timestamp}.csv")
+    xlsx_path = os.path.join(CSV_DIR, f"{base_name}_{timestamp}.xlsx")
+
+    try:
+        # CSV
+        df.to_csv(csv_path, index=False, encoding='utf-8-sig')
+        print(f"Сохранено в CSV:  {csv_path}")
+
+        # Excel — пробуем openpyxl, если нет → xlsxwriter
+        try:
+            with pd.ExcelWriter(xlsx_path, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name="Результат", index=False)
+            print(f"Сохранено в Excel (openpyxl): {xlsx_path}")
+        except ImportError:
+            print("openpyxl не найден → пробуем xlsxwriter...")
+            try:
+                with pd.ExcelWriter(xlsx_path, engine='xlsxwriter') as writer:
+                    df.to_excel(writer, sheet_name="Результат", index=False)
+                print(f"Сохранено в Excel (xlsxwriter): {xlsx_path}")
+            except ImportError:
+                print("xlsxwriter тоже не найден → сохраняем только CSV")
+                print("Установите один из пакетов: pip install openpyxl   или   pip install xlsxwriter")
+
+        print(f"Сохранено в Excel: {xlsx_path}")
+
+    except Exception as e:
+        print(f"Ошибка при сохранении файлов: {e}")
+
 def main():
     nb = init_netbox()
 
     def get_prefix_and_descr(search_ip):
         p, d = get_longest_prefix(search_ip, nb)
         return p, d
-
 
     try:
         # Читаем CSV, все поля как строки
@@ -202,8 +235,7 @@ def main():
         print(f"Всего строк в исходном файле: {len(df)}")
 
         # Если хотите сохранить результат в файл
-        counts.to_csv(OUTPUT_FILE, index=False)
-        print(f"\nСохранено в: {OUTPUT_FILE}")
+        save_results(counts)
 
     except FileNotFoundError:
         print(f"Файл не найден: {INPUT_FILE}")
