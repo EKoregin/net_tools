@@ -8,6 +8,7 @@ import pynetbox
 from dotenv import load_dotenv
 
 """
+Работает только с Huawei
 Подключение к хостам и выполнение команды "display ip routing-table protocol direct"
 Сохранение вывода в файлы.
 Парсинг файлов и создание сборной таблицы с данными:
@@ -108,7 +109,7 @@ def load_devices_from_file(file_path):
 def load_devices_from_netbox():
     nb = pynetbox.api(NETBOX_URL, TOKEN)
     devices = nb.dcim.devices.filter(
-        role=['aggregation','access'],
+        role=['aggregation'],
         tenant=TENANT,
         manufacturer="huawei"
     )
