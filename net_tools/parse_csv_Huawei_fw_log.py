@@ -44,11 +44,7 @@ TOKEN       = os.getenv("TOKEN")
 TENANT      = os.getenv("TENANT")
 CSV_DIR     = "csv"
 INPUT_FILE  = CSV_DIR + "/policy_org.csv"
-# OUTPUT_FILE = CSV_DIR + "/unique_with_counts.csv"
 
-# Список полей, которые нужно оставить
-# Порядок в списке определяет порядок колонок в выводе
-# Первое поле будет использовано для сортировки
 NEEDED_COLUMNS = [
     "Source Address",
     "Destination Address",
@@ -116,20 +112,46 @@ def get_longest_prefix(ip_str: str, nb) -> tuple[Optional[str], Optional[str]]:
     # 3. Запрос в NetBox через pynetbox
     try:
         # Ищем префиксы, содержащие данный IP
-        prefixes = nb.ipam.prefixes.filter(
+        prefixes = list(nb.ipam.prefixes.filter(
             contains=ip_str,
-            tenant=TENANT,
+            # tenant=TENANT,
             limit=100
-        )
+        ))
 
         if not prefixes:
             ip_to_prefix[ip_str] = (None, None)
             return None, None
 
-        # Находим самый длинный (max prefixlen)
-        longest = list(prefixes)[-1]
-        prefix_str = str(longest.prefix)  # "10.10.5.0/24"
-        description = str(longest.vlan)
+        # Поиск самого длинного префикса и проверка на tenant
+        # 1. Ищем префиксы по tenant
+        # 2. Если находим несколько, то выбираем самый длинный
+        # 3. Если не находим по tenant, то выбираем самый длинный у оставшихся
+        search_tenant_prefixes = []
+        other_prefixes = []
+        # 1. Распределяем префиксы по арендатору (tenant)
+        for prefix in prefixes:
+            if prefix.tenant is not None and prefix.tenant.name.lower() == TENANT:
+                search_tenant_prefixes.append(prefix)
+            else:
+                other_prefixes.append(prefix)
+
+        # 2. Если по искомому арендатору есть префиксы, то выбираемы самый длинные
+        # иначе ищем в префиксах других арендаторов.
+        # Выбираем самый последний, если длина префиксов одинаковая.
+        longest_prefix = None
+        if len(search_tenant_prefixes) > 0:
+            longest_prefix = max(search_tenant_prefixes, key=lambda p: int(str(p).split("/")[-1]))
+        else:
+            if len(other_prefixes) > 0:
+                longest_prefix = max(other_prefixes, key=lambda p: int(str(p).split("/")[-1]))
+
+        prefix_str = str(longest_prefix.prefix)
+        vlan = longest_prefix.vlan.display if longest_prefix.vlan else ""
+        descr = longest_prefix.description if longest_prefix.description else ""
+        role = longest_prefix.role.display if longest_prefix.role else ""
+        tenant = longest_prefix.tenant.display if longest_prefix.tenant else ""
+
+        description = (vlan + "-" if len(vlan) != 0 else descr + " " + role + " ") + tenant
 
         Prefixes.add((prefix_str, description))
         ip_to_prefix[ip_str] = (prefix_str, description)

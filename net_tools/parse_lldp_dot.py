@@ -47,7 +47,7 @@ PASSWORD   = os.getenv("PASSWORD")
 RESULT_CSV = os.getenv("RESULT_CSV")
 RAW_OUTPUT_DIR = os.getenv("RAW_OUTPUT_DIR")
 # Название арендатора, если хосты берутся из Netbox
-TENANT = os.getenv("TENANT")
+TENANT = os.getenv("TENANT").lower()
 
 if not all([NETBOX_URL, TOKEN, COMMAND, USERNAME, PASSWORD, RESULT_CSV, RAW_OUTPUT_DIR]):
     raise ValueError("Не заданы обязательные переменные")
@@ -73,7 +73,7 @@ def load_devices_from_netbox():
         print(dev.name, ip_addr)
         dev_data = {
             'name': dev.name,
-            'host': ip_addr.replace("/32", ""),
+            'host': ip_addr.split('/', 1)[0],
             'username': USERNAME,
             'password': PASSWORD
         }
