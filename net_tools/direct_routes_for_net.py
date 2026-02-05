@@ -1,4 +1,6 @@
 import re
+from datetime import datetime
+from pathlib import Path
 import pandas as pd
 import os
 import argparse
@@ -19,6 +21,17 @@ Network, Protocol, Device, Interface, NextHop
 --netbox // Данные будут браться из Netbox API
 --collect //Версия с промежуточным сохранением в файлы (по умолчанию)
 --from-files //Повторная обработка без подключения (после первого запуска)
+
+Примеры:
+Данные о хостах из Netbox с сохранением в файлы
+python.exe .\direct_routes_for_net.py --netbox --collect
+
+Повторная обработка существующих файлов (без подключения)
+python.exe .\direct_routes_for_net.py --from-files
+
+Данные о хостах из файл devices.yaml, с сохранение в файлы
+python.exe .\direct_routes_for_net.py
+
 
 Конфигурационные данные берутся из файлов devices.yaml и .env
 Если используется флаг --netbox, то devices.yaml не нужен.  
@@ -42,14 +55,15 @@ TENANT = "berlin"
 # ------------------------------------------------------------------------------
 load_dotenv()
 NETBOX_URL = os.getenv("NETBOX_URL")
-TOKEN      = os.getenv("TOKEN")
-COMMAND    = os.getenv("COMMAND")
-USERNAME   = os.getenv("USER")
-PASSWORD   = os.getenv("PASSWORD")
+TOKEN = os.getenv("TOKEN")
+COMMAND = os.getenv("COMMAND")
+USERNAME = os.getenv("USER")
+PASSWORD = os.getenv("PASSWORD")
 RESULT_CSV = os.getenv("RESULT_CSV")
 RAW_OUTPUT_DIR = os.getenv("RAW_OUTPUT_DIR")
+OUT_DIR     = "direct_routes"
 # Название арендатора, если хосты берутся из Netbox
-TENANT = os.getenv("TENANT")
+TENANT = os.getenv("TENANT").lower()
 
 if not all([NETBOX_URL, TOKEN, COMMAND, USERNAME, PASSWORD, RESULT_CSV, RAW_OUTPUT_DIR]):
     raise ValueError("Не заданы обязательные переменные")
@@ -80,6 +94,7 @@ parser.add_argument('--netbox', action='store_true',
                     help="Брать данные о хостах из Netbox")
 args = parser.parse_args()
 
+
 # ------------------------------------------------------------------------------
 # Функции
 # ------------------------------------------------------------------------------
@@ -105,6 +120,7 @@ def load_devices_from_file(file_path):
         print(f"Ошибка чтения файла устройств: {e}")
         return []
 
+
 # Получение хостов из API netbox
 def load_devices_from_netbox():
     nb = pynetbox.api(NETBOX_URL, TOKEN)
@@ -119,7 +135,6 @@ def load_devices_from_netbox():
 
     data = []
     for dev in devices:
-
         ip_addr = dev.primary_ip.address
         print(dev.name, ip_addr)
         dev_data = {
@@ -223,39 +238,82 @@ def process_raw_files():
     return all_rows
 
 
+def save_results(df: pd.DataFrame, base_name: str = "routes"):
+    """Сохраняет DataFrame в CSV и Excel"""
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    Path(OUT_DIR).mkdir(parents=True, exist_ok=True)
+
+    csv_path = os.path.join(OUT_DIR, f"{base_name}_{timestamp}.csv")
+    xlsx_path = os.path.join(OUT_DIR, f"{base_name}_{TENANT}_{timestamp}.xlsx")
+
+    try:
+        # CSV
+        df.to_csv(csv_path, index=False, encoding='utf-8-sig')
+        print(f"Сохранено в CSV:  {csv_path}")
+
+        # Excel — пробуем openpyxl, если нет → xlsxwriter
+        try:
+            with pd.ExcelWriter(xlsx_path, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name="Результат", index=False)
+            print(f"Сохранено в Excel (openpyxl): {xlsx_path}")
+        except ImportError:
+            print("openpyxl не найден → пробуем xlsxwriter...")
+            try:
+                with pd.ExcelWriter(xlsx_path, engine='xlsxwriter') as writer:
+                    df.to_excel(writer, sheet_name="Результат", index=False)
+                print(f"Сохранено в Excel (xlsxwriter): {xlsx_path}")
+            except ImportError:
+                print("xlsxwriter тоже не найден → сохраняем только CSV")
+                print("Установите один из пакетов: pip install openpyxl   или   pip install xlsxwriter")
+
+        print(f"Сохранено в Excel: {xlsx_path}")
+
+    except Exception as e:
+        print(f"Ошибка при сохранении файлов: {e}")
+
+
 # ------------------------------------------------------------------------------
 # Основная логика
 # ------------------------------------------------------------------------------
+def main():
+    data = []
 
-data = []
+    if args.from_files:
+        print("Режим: обработка сохранённых файлов")
+        data = process_raw_files()
 
-if args.from_files:
-    print("Режим: обработка сохранённых файлов")
-    data = process_raw_files()
-
-else:
-    if args.netbox:
-        devices = load_devices_from_netbox()
     else:
-        devices = load_devices_from_file(args.devices_file)
-    if not devices:
-        print("Не удалось загрузить список устройств")
-        exit(1)
+        if args.netbox:
+            devices = load_devices_from_netbox()
+        else:
+            devices = load_devices_from_file(args.devices_file)
+        if not devices:
+            print("Не удалось загрузить список устройств")
+            exit(1)
 
-    print(f"Найдено устройств: {len(devices)}\n")
+        print(f"Найдено устройств: {len(devices)}\n")
 
-    for dev in devices:
-        hostname, output = collect_from_device(dev)
-        if output:
-            rows = parse_output(hostname, output)
-            data.extend(rows)
+        for dev in devices:
+            hostname, output = collect_from_device(dev)
+            if output:
+                rows = parse_output(hostname, output)
+                data.extend(rows)
 
-if data:
-    df = pd.DataFrame(data)
-    df = df.sort_values(by=['Device', 'Network'])
-    df.to_csv(RESULT_CSV, index=False, encoding='utf-8-sig')
-    print(f"\nСохранено {len(df)} записей → {RESULT_CSV}")
-else:
-    print("\nНе удалось собрать данные")
+    if data:
+        df = pd.DataFrame(data)
+        df = df.sort_values(by=['Device', 'Network'])
 
-print("Готово.")
+        # Если хотите сохранить результат в файл
+        save_results(df)
+
+        # df.to_csv(RESULT_CSV, index=False, encoding='utf-8-sig')
+        print(f"\nСохранено {len(df)} записей → {RESULT_CSV}")
+    else:
+        print("\nНе удалось собрать данные")
+
+    print("Готово.")
+
+
+if __name__ == "__main__":
+    main()
