@@ -50,9 +50,7 @@ def generate_service_set(name: str, proto_list: List[str], start: int, end: int)
 
 
 def main():
-    # Можно передать путь к файлу как аргумент или захардкодить
-    # filename = sys.argv[1] if len(sys.argv) > 1 else "ports.csv"
-    filename = "fw_services.csv"  # ← поменяйте при необходимости
+    filename = sys.argv[1] if len(sys.argv) > 1 else "fw_services.csv"
 
     print("#" * 65)
     print("#  Автосгенерированная конфигурация service-set для Huawei USG")
