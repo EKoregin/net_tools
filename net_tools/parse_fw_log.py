@@ -7,7 +7,7 @@ SrcAddr, DstAddr, Port, Protocol
 Если поиск в Netbox находит несколько сетей, то выбирается самый длинный префикс.
 Формат файла .env
 NETBOX_URL = "https://netbox.domain.com"
-TOKEN = "e998dklsdf987fsljdsf99798lsdf979j"
+TOKEN = "e998dklsdf987fsljdsf99798lsdf979j" (нужно создать свой в Netbox)
 
 Результат выводится в консоль и в Excel
 
@@ -25,9 +25,11 @@ python -m pip install -r requirements.txt
 
 Запуск скрипта:
 Для Huawei USG
-python.exe .\parse_fw_log.py --tenant=Moscow --fw=huawei --file=policy_org.csv
+python.exe .\parse_fw_log.py --tenant=wh-Moscow --fw=huawei --file=policy_org.csv
 Для Fortigate
-python.exe .\parse_fw_log.py --tenant=Moscow --fw=fortigate --file=fortigate.log
+python.exe .\parse_fw_log.py --tenant=wh-Moscow --fw=fortigate --file=fortigate.log
+
+Excel с результатами сохраняется в директорию "parse_log_result"
 """
 import argparse
 import ipaddress
