@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import dns.reversename
 import dns.resolver
 from functools import lru_cache
+from ipaddress import ip_address, IPv4Address, IPv6Address
 
 DNS_RESOLVER = dns.resolver.Resolver(configure=False).nameservers = ['1.1.1.1', '1.0.0.1']
 
@@ -84,6 +85,40 @@ def ptr_lookup(ip: str, timeout: float = 1.6) -> str | None:
     except Exception:
         return None
 
+@lru_cache(maxsize=20_000)
+def ptr_lookup4(ip: str | None) -> Optional[str]:
+    if not isinstance(ip, str) or not ip.strip():
+        return None
+
+    ip_clean = ip.strip()
+
+    # Быстрая проверка на валидность и публичность
+    try:
+        addr = ip_address(ip_clean)  # → IPv4Address или IPv6Address
+
+        # Основные фильтры: только действительно публичные / глобально маршрутизируемые IP
+        if (
+            addr.is_private or
+            addr.is_loopback or
+            addr.is_link_local or
+            addr.is_reserved or
+            not addr.is_global          # ← самый строгий и рекомендуемый критерий
+        ):
+            return None
+
+    except ValueError:
+        # Некорректный IP (не IPv4 и не IPv6) — пропускаем
+        return None
+
+    # Здесь мы уже уверены, что IP публичный → делаем запрос
+    try:
+        rev_name = dns.reversename.from_address(ip_clean)
+        answers = dns.resolver.resolve(rev_name, "PTR", raise_on_no_answer=False)
+        if answers:
+            return str(answers[0].target).rstrip('.')
+        return None
+    except Exception:
+        return None
 
 def mass_reverse_dns(ips: list[str], max_workers: int = 400) -> dict:
     results = {}
