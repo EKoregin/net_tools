@@ -1,3 +1,5 @@
+#pip install dnspython
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import dns.reversename
 import dns.resolver
