@@ -42,6 +42,17 @@ import pandas as pd
 import pynetbox
 from dotenv import load_dotenv
 from datetime import datetime
+# import logging
+# import http.client
+#
+# from urllib3 import request
+#
+# http.client.HTTPConnection.debuglevel = 1
+# logging.basicConfig()
+# logging.getLogger().setLevel(logging.DEBUG)
+# request_log = logging.getLogger('urllib3')
+# request_log.setLevel(logging.DEBUG)
+# request_log.propagate = True
 
 # ────────────────────────────────────────────────
 # НАСТРОЙКИ
