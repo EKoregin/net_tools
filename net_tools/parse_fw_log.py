@@ -42,6 +42,14 @@ import pandas as pd
 import pynetbox
 from dotenv import load_dotenv
 from datetime import datetime
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import dns.reversename
+import dns.resolver
+from functools import lru_cache
+
+from openpyxl.pivot.fields import Boolean
+
 # import logging
 # import http.client
 #
@@ -81,6 +89,56 @@ FORTIGATE_PATTERN = re.compile(
 Prefixes = set()  # Кэш всех найденных префиксов
 ip_to_prefix: Dict[str, str] = {}  # Кэш: IP → самый длинный префикс
 
+DNS_RESOLVER = dns.resolver.Resolver(configure=False)
+DNS_RESOLVER.nameservers = ['10.15.12.100', '10.15.12.200']
+
+@lru_cache(maxsize=10_000)
+def ptr_lookup(ip: str, timeout: float = 1.6) -> str | None:
+
+    if not isinstance(ip, str):
+        return None
+    ip_clean = ip.strip()
+
+    try:
+        addr = ipaddress.ip_address(ip_clean)  # → IPv4Address или IPv6Address
+
+        # Основные фильтры: только действительно публичные / глобально маршрутизируемые IP
+        if (
+            addr.is_private or
+            addr.is_loopback or
+            addr.is_link_local or
+            addr.is_reserved or
+            not addr.is_global          # ← самый строгий и рекомендуемый критерий
+        ):
+            return "private"
+
+    except ValueError:
+        return None
+
+    try:
+        rev_name = dns.reversename.from_address(ip_clean)
+        answers = DNS_RESOLVER.resolve(rev_name, "PTR", raise_on_no_answer=False)
+        if answers:
+            return str(answers[0].target).rstrip('.')
+        return None
+    except Exception as ex:
+        # print(ex)
+        return "not resolve"
+
+
+def mass_reverse_dns(ips: list[str], max_workers: int = 400) -> dict:
+    results = {}
+    print("Обратный резолвинг Destination IP")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_ip = {executor.submit(ptr_lookup, ip): ip for ip in ips}
+        for future in as_completed(future_to_ip):
+            ip = future_to_ip[future]
+            try:
+                result = future.result()
+                results[ip] = result
+            except Exception:
+                results[ip] = None
+    return results
 
 def init_netbox():
     """Инициализация подключения к NetBox"""
@@ -124,7 +182,7 @@ def parse_fortigate_log(log_lines):
     return df
 
 
-def process_csv_file(file_path, tenant, nb):
+def process_csv_file(file_path, tenant, nb, resolve: bool = True):
     """
     Обрабатывает CSV-файл: читает, добавляет префиксы и описания, группирует.
     """
@@ -156,8 +214,15 @@ def process_csv_file(file_path, tenant, nb):
         df["SrcPrefix"] = prefix_descr.apply(lambda x: x[0])
         df["SrcDescription"] = prefix_descr.apply(lambda x: x[1])
 
-        # Группируем и считаем количество
         group_cols = NEEDED_COLUMNS + ["SrcPrefix", "SrcDescription"]
+
+        if resolve:
+            dstAddresses = list(df["Destination Address"])
+            reverse_ip_result = mass_reverse_dns(dstAddresses, 100)
+            df["DstIPResolve"] = df["Destination Address"].apply(lambda ip: reverse_ip_result[ip])
+            group_cols = group_cols + ["DstIPResolve"]
+
+        # Группируем и считаем количество
         result = df.groupby(group_cols, dropna=False).size().reset_index(name='Count')
 
         # Сортируем
@@ -175,7 +240,7 @@ def process_csv_file(file_path, tenant, nb):
         return None, None
 
 
-def process_fortigate_log(file_path, tenant, nb):
+def process_fortigate_log(file_path, tenant, nb, resolve: bool = True):
     """
     Обрабатывает текстовый лог FortiGate.
     """
@@ -216,6 +281,13 @@ def process_fortigate_log(file_path, tenant, nb):
 
         # Группируем
         group_cols = fortigate_columns + ["SrcPrefix", "SrcDescription"]
+
+        if resolve:
+            dstAddresses = list(df["Destination Address"])
+            reverse_ip_result = mass_reverse_dns(dstAddresses, 10)
+            df["DstIPResolve"] = df["Destination Address"].apply(lambda ip: reverse_ip_result[ip])
+            group_cols = group_cols + ["DstIPResolve"]
+
         result = df.groupby(group_cols, dropna=False).size().reset_index(name='Count')
 
         # Сортируем по первому столбцу
@@ -385,7 +457,11 @@ def main():
                         help="Тип FW. Возможны: huawei, fortigate")
     parser.add_argument("--tenant", required=True, help="Имя площадки / tenant в NetBox")
     parser.add_argument("--file", required=True, help="Путь к файлу (CSV или лог)")
+    parser.add_argument("--resolve", type=str, default='true',
+                        choices=['true', 'false', 'yes', 'no', '1', '0', 'on', 'off'],
+                        help="Обратный резолвинг для Destination IP. По умолчанию включен")
     args = parser.parse_args()
+    resolve_value = args.resolve.lower() in ('true', 'yes', '1', 'on')
     nb = init_netbox()
 
     result = None
@@ -393,11 +469,11 @@ def main():
 
     if args.fw == "huawei":
         print(f"Обработка CSV-файла: {args.file}")
-        result, group_cols = process_csv_file(args.file, args.tenant, nb)
+        result, group_cols = process_csv_file(args.file, args.tenant, nb, resolve_value)
 
     elif args.fw == "fortigate":
         print(f"Обработка лога FortiGate: {args.file}")
-        result, group_cols = process_fortigate_log(args.file, args.tenant, nb)
+        result, group_cols = process_fortigate_log(args.file, args.tenant, nb, resolve_value)
 
     print_results(result, group_cols)
     if result is not None and not result.empty:
