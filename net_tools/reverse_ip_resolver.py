@@ -5,6 +5,7 @@ import dns.reversename
 import dns.resolver
 from functools import lru_cache
 
+DNS_RESOLVER = dns.resolver.Resolver(configure=False).nameservers = ['1.1.1.1', '1.0.0.1']
 
 @lru_cache(maxsize=10_000)   # можно поставить 50_000 или больше, если памяти хватает
 def ptr_lookup(ip: str, timeout: float = 1.6) -> str | None:
@@ -25,7 +26,8 @@ def mass_reverse_dns(ips: list[str], max_workers: int = 400) -> dict:
         for future in as_completed(future_to_ip):
             ip = future_to_ip[future]
             try:
-                results[ip] = future.result()
+                result = future.result()
+                results[ip] = result
             except Exception:
                 results[ip] = None
     return results
