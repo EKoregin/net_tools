@@ -15,9 +15,16 @@ TOKEN = "e998dklsdf987fsljdsf99798lsdf979j" (нужно создать свой 
 Если запускаете из консоли, то предварительно установите зависимости
 Создайте файл requirements.txt с содержимым:
 pynetbox~=7.6.1
-pandas~=3.0.0
+nornir~=3.5.0
+PyYAML~=6.0.3
+graphviz~=0.21
 dotenv~=0.9.9
+python-dotenv~=1.2.1
+pyvis~=0.3.2
+pandas~=3.0.0
+netmiko~=4.6.0
 openpyxl~=3.1.5
+dnspython~=2.8.0
 
 и запустите
 python -m pip install --upgrade pip
