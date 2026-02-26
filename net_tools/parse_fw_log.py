@@ -86,6 +86,27 @@ FORTIGATE_PATTERN = re.compile(
     r'proto=(?P<proto>\d+)'
 )
 
+FORTIGATE_PATTERN_NO_PORT = re.compile(
+    r'srcip=(?P<srcip>[^ ]+)\s+'
+    r'.*?'
+    r'dstip=(?P<dstip>[^ ]+)\s+'
+    r'.*?'
+    r'proto=(?P<proto>\d+)'
+)
+
+PROTOCOLS = {
+    1: "ICMP",
+    2: "IGMP",
+    6: "TCP",
+    17: "UDP",
+    41: "IPv6",
+    47: "GRE",
+    50: "ESP",
+    51: "AH",
+    89: "OSPF",
+    132: "SCTP",
+}
+
 Prefixes = set()  # Кэш всех найденных префиксов
 ip_to_prefix: Dict[str, str] = {}  # Кэш: IP → самый длинный префикс
 
@@ -166,6 +187,10 @@ def parse_fortigate_log(log_lines):
         match = FORTIGATE_PATTERN.search(line)
         if match:
             data.append(match.groupdict())
+        else:
+            no_port_match = FORTIGATE_PATTERN_NO_PORT.search(line)
+            if no_port_match:
+                data.append(no_port_match.groupdict())
 
     if not data:
         print("Не удалось найти подходящие записи в логе FortiGate")
@@ -278,6 +303,7 @@ def process_fortigate_log(file_path, tenant, nb, resolve: bool = True):
         prefix_descr = df["Source Address"].apply(lambda ip: get_longest_prefix(ip, nb, tenant))
         df["SrcPrefix"] = prefix_descr.apply(lambda x: x[0])
         df["SrcDescription"] = prefix_descr.apply(lambda x: x[1])
+        df["Protocol"] = df["Protocol"].astype(int).map(PROTOCOLS).fillna("Unknown")
 
         # Группируем
         group_cols = fortigate_columns + ["SrcPrefix", "SrcDescription"]
